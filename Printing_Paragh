@@ -1,0 +1,5 @@
+print("\n📝 Paragraph Index Mapping:\n")
+for i, text in enumerate(texts):
+    print(f"{i}: {text[:120]}{'...' if len(text) > 120 else ''}")
+
+
