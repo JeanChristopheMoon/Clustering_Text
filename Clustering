@@ -1,0 +1,84 @@
+from sklearn.preprocessing import normalize
+from docx import Document
+from sentence_transformers import SentenceTransformer
+import hdbscan
+import umap
+from sklearn.feature_extraction.text import TfidfVectorizer
+import matplotlib.pyplot as plt
+import seaborn as sns
+import spacy
+from collections import Counter
+import numpy as np
+
+# 🔹 STEP 1: Load your Word document (.docx)
+doc = Document("Text.docx")  # ⬅️ Replace with your file name
+texts = [para.text.strip() for para in doc.paragraphs if para.text.strip()]
+print(f"✅ Loaded {len(texts)} text units from Word file.")
+
+# 🔹 STEP 2: Embed the texts using Sentence-BERT
+model = SentenceTransformer('all-MiniLM-L6-v2')
+embeddings = model.encode(texts, show_progress_bar=True)
+
+# 🔹 STEP 3: Cluster the embeddings using HDBSCAN
+normalized_embeddings = normalize(embeddings)
+clusterer = hdbscan.HDBSCAN(
+    min_cluster_size=2,
+    min_samples=1,
+    metric='euclidean'
+)
+labels = clusterer.fit_predict(normalized_embeddings)
+
+
+# 🔹 STEP 4: Extract keywords per cluster using TF-IDF
+print("\n🔍 Cluster Keywords:")
+for label in set(labels):
+    if label == -1:
+        continue  # Skip noise
+    cluster_texts = [texts[i] for i in range(len(texts)) if labels[i] == label]
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=5)
+    X = vectorizer.fit_transform(cluster_texts)
+    keywords = vectorizer.get_feature_names_out()
+    print(f"Cluster {label}: {keywords}")
+
+# 🔹 STEP 5: Named Entity Recognition (GPE, ORG, PERSON)
+print("\n🌍 Named Entities in Clusters:")
+nlp = spacy.load("en_core_web_sm")
+for label in set(labels):
+    if label == -1:
+        continue
+    cluster_texts = [texts[i] for i in range(len(texts)) if labels[i] == label]
+    ents = []
+    for doc in nlp.pipe(cluster_texts):
+        ents += [ent.text for ent in doc.ents if ent.label_ in ['GPE', 'ORG', 'PERSON']]
+    common_ents = Counter(ents).most_common(5)
+    print(f"Cluster {label} top entities:", common_ents)
+
+# 🔹 STEP 6: Dimensionality reduction for 2D visualization
+reducer = umap.UMAP(n_neighbors=10, n_components=2, metric='cosine')
+embedding_2d = reducer.fit_transform(embeddings)
+
+# 🔹 STEP 7: Plot the clusters
+plt.figure(figsize=(12, 7))
+unique_labels = set(labels)
+palette = sns.color_palette("hls", len(unique_labels))
+
+for label in unique_labels:
+    mask = labels == label
+    label_name = f"Cluster {label}" if label != -1 else "Noise"
+    plt.scatter(
+        embedding_2d[mask, 0],
+        embedding_2d[mask, 1],
+        label=label_name,
+        alpha=0.75,
+        s=100
+    )
+
+# Annotate with text index
+for i, (x, y) in enumerate(embedding_2d):
+    plt.annotate(str(i), (x+0.1, y+0.1), fontsize=8)
+
+plt.title("📌 Clusters of Paragraphs from Word Document")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
