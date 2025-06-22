@@ -1,0 +1,21 @@
+import pandas as pd
+
+# Visualize TF-IDF keywords as bar plots
+for label in sorted(set(labels)):
+    if label == -1:
+        continue  # Skip noise
+    cluster_texts = [texts[i] for i in range(len(texts)) if labels[i] == label]
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=10)
+    X = vectorizer.fit_transform(cluster_texts)
+    keywords = vectorizer.get_feature_names_out()
+    scores = X.toarray().mean(axis=0)  # Average TF-IDF score
+
+    # Plot
+    plt.figure(figsize=(6, 4))
+    df = pd.DataFrame({'keyword': keywords, 'score': scores})
+    df = df.sort_values(by='score', ascending=True)
+    plt.barh(df['keyword'], df['score'], color='skyblue')
+    plt.title(f"Top Keywords for Cluster {label}")
+    plt.xlabel("Avg TF-IDF Score")
+    plt.tight_layout()
+    plt.show()
