@@ -1,0 +1,28 @@
+from sklearn.feature_extraction.text import TfidfVectorizer
+from collections import defaultdict
+
+# Assuming you have a list of texts and corresponding cluster labels
+# texts = [...]  # list of all texts
+# cluster_labels = [...]  # list of same length with corresponding cluster labels
+
+# Dictionary to store keywords per cluster
+cluster_keywords = {}
+
+# Get unique labels
+unique_labels = set(labels)
+
+for label in sorted(unique_labels):
+    # Get texts that belong to this cluster
+    cluster_texts = [texts[i] for i in range(len(texts)) if labels[i] == label]
+    
+    # Skip small clusters (optional)
+    if len(cluster_texts) < 2:
+        continue
+    
+    # Vectorize and get top keywords
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=5)
+    X = vectorizer.fit_transform(cluster_texts)
+    keywords = vectorizer.get_feature_names_out()
+    
+    cluster_keywords[label] = keywords
+    print(f"🔹 Cluster {label} ({len(cluster_texts)} texts): {keywords}")
