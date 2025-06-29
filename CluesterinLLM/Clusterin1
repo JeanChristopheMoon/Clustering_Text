@@ -1,0 +1,92 @@
+import pandas as pd
+import spacy
+from collections import Counter
+from sentence_transformers import SentenceTransformer
+from sklearn.preprocessing import normalize
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.feature_extraction.text import TfidfVectorizer
+import umap
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# === STEP 0: Load cleaned_texts.tsv ===
+df = pd.read_csv("texts_without_locations.tsv", sep='\t')
+texts = df.iloc[:, 0].dropna().astype(str).tolist()
+
+# === STEP 1: Extract common entities ===
+print("\n🧹 Extracting global entities...")
+nlp = spacy.load("en_core_web_sm")
+all_ents = []
+for doc in nlp.pipe(texts, batch_size=50):
+    all_ents.extend([ent.text.lower() for ent in doc.ents if ent.label_ in ['GPE', 'ORG', 'PERSON']])
+ent_freq = Counter(all_ents)
+threshold = 0.3 * len(texts)
+common_ents = {ent for ent, count in ent_freq.items() if count > threshold}
+print(f"Common entities to filter out ({len(common_ents)}): {common_ents}")
+
+# === STEP 2: Embed texts with SBERT ===
+print("\n🧠 Embedding texts with SBERT...")
+model = SentenceTransformer('all-MiniLM-L6-v2')
+embeddings = model.encode(texts, show_progress_bar=True)
+normalized_embeddings = normalize(embeddings)
+
+# === STEP 3: Cluster with Agglomerative Clustering ===
+print("\n🔗 Clustering with Hierarchical Agglomerative Clustering...")
+clusterer = AgglomerativeClustering(n_clusters=None, distance_threshold=1.5)  # Adjust threshold as needed
+labels = clusterer.fit_predict(normalized_embeddings)
+
+# Add cluster labels to dataframe
+df['cluster'] = labels
+
+ #=== STEP 4: Extract keywords per cluster ===
+print("\n🔍 Cluster Keywords:")
+cluster_keywords = {}
+for label in set(labels):
+    cluster_texts = [texts[i] for i in range(len(texts)) if labels[i] == label]
+    if not cluster_texts:  # skip empty clusters
+        continue
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=5)
+    try:
+        X = vectorizer.fit_transform(cluster_texts)
+        keywords = vectorizer.get_feature_names_out()
+    except ValueError:
+        keywords = []
+    cluster_keywords[label] = keywords
+    print(f"Cluster {label}: {keywords}")
+# Save keywords alongside clusters in dataframe (optional)
+df['keywords'] = df['cluster'].map(cluster_keywords)
+
+# === STEP 5: Named Entities per cluster (filtered) ===
+print("\n🌍 Named Entities in Clusters:")
+cluster_entities = {}
+for label in set(labels):
+    cluster_texts = [texts[i] for i in range(len(texts)) if labels[i] == label]
+    ents = []
+    for doc_spacy in nlp.pipe(cluster_texts):
+        ents += [
+            ent.text for ent in doc_spacy.ents
+            if ent.label_ in ['GPE', 'ORG', 'PERSON'] and ent.text.lower() not in common_ents
+        ]
+    filtered_ents = Counter(ents).most_common(5)
+    cluster_entities[label] = filtered_ents
+    print(f"Cluster {label} top filtered entities:", filtered_ents)
+
+
+
+# === STEP 6: UMAP Visualization ===
+print("\n📊 Visualizing clusters with UMAP...")
+reducer = umap.UMAP(n_neighbors=10, n_components=2, metric='cosine')
+embedding_2d = reducer.fit_transform(normalized_embeddings)
+
+plt.figure(figsize=(12, 7))
+palette = sns.color_palette("hls", len(set(labels)))
+for label in set(labels):
+    mask = (labels == label)
+    label_name = f"Cluster {label}"
+    plt.scatter(embedding_2d[mask, 0], embedding_2d[mask, 1], label=label_name, alpha=0.75, s=100)
+
+plt.title("📌 Clusters of Texts using SBERT + Hierarchical Clustering")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
