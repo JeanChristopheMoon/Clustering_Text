@@ -1,0 +1,105 @@
+import pandas as pd
+import spacy
+from collections import Counter
+from sentence_transformers import SentenceTransformer
+from sklearn.preprocessing import normalize
+from sklearn.cluster import AgglomerativeClustering
+import umap
+import matplotlib.pyplot as plt
+import seaborn as sns
+from keybert import KeyBERT
+from bertopic import BERTopic
+
+# === STEP 0: Load input TSV file ===
+df = pd.read_csv("cleaned_texts.tsv", sep="\t")
+texts = df.iloc[:, 0].dropna().astype(str).tolist()
+
+# === STEP 1: Mask GPE, ORG, PERSON entities with generic tokens ===
+print("\n🔒 Masking named entities (GPE, ORG, PERSON)...")
+nlp = spacy.load("en_core_web_sm")
+masked_texts = []
+for doc in nlp.pipe(texts, batch_size=50):
+    new_text = doc.text
+    for ent in reversed(doc.ents):  # reversed so replacements don't mess up offsets
+        if ent.label_ in ['GPE','PERSON']:
+            new_text = new_text[:ent.start_char] + f"[{ent.label_}]" + new_text[ent.end_char:]
+    masked_texts.append(new_text)
+
+# Save masked version
+masked_df = pd.DataFrame({'masked_text': masked_texts})
+masked_df.to_csv("texts_masked_gpe.tsv", sep="\t", index=False)
+print("✅ Saved masked file to texts_masked_gpe.tsv")
+
+# === STEP 2: SBERT Embedding ===
+print("\n🧠 Embedding masked texts with SBERT...")
+model = SentenceTransformer('all-roberta-large-v1')
+embeddings = model.encode(masked_texts, show_progress_bar=True)
+normalized_embeddings = normalize(embeddings)
+
+# === STEP 3: Apply BERTopic (for topic modeling & clustering) ===
+print("\n🗂️ Applying BERTopic for topic modeling...")
+topic_model = BERTopic(
+    embedding_model=model,
+    min_topic_size=8,       # 👈 Minimum number of docs per topic (try 5–15)
+    nr_topics="auto",       # 👈 Automatically reduce topic count later
+    verbose=True
+)
+
+topics, _ = topic_model.fit_transform(masked_texts, embeddings)
+
+# Add cluster labels
+df['cluster'] = topics
+
+# === STEP 4: Extract keywords per cluster using KeyBERT ===
+print("\n🔍 Cluster Keywords (KeyBERT):")
+kw_model = KeyBERT(model)
+cluster_keywords = {}
+for label in set(topics):
+    cluster_texts = [masked_texts[i] for i in range(len(masked_texts)) if topics[i] == label]
+    joined_text = " ".join(cluster_texts)
+    keywords = kw_model.extract_keywords(joined_text, top_n=5, stop_words='english')
+    keyword_list = [kw for kw, score in keywords]
+    cluster_keywords[label] = keyword_list
+    print(f"Cluster {label}: {keyword_list}")
+df['keywords'] = df['cluster'].map(cluster_keywords)
+
+# === STEP 5: Named Entities a original texts (filtered) ===
+print("\n🌍 Named Entities in Clusters (original, filtered)...")
+all_ents = []
+for doc in nlp.pipe(texts, batch_size=50):
+    all_ents.extend([ent.text.lower() for ent in doc.ents if ent.label_ in ['GPE', 'ORG', 'PERSON']])
+ent_freq = Counter(all_ents)
+threshold = 0.3 * len(texts)
+common_ents = {ent for ent, count in ent_freq.items() if count > threshold}
+
+for label in set(topics):
+    cluster_texts = [texts[i] for i in range(len(texts)) if topics[i] == label]
+    ents = []
+    for doc_spacy in nlp.pipe(cluster_texts):
+        ents += [
+            ent.text for ent in doc_spacy.ents
+            if ent.label_ in ['GPE', 'ORG', 'PERSON'] and ent.text.lower() not in common_ents
+        ]
+    filtered_ents = Counter(ents).most_common(5)
+    print(f"Cluster {label} top filtered entities:", filtered_ents)
+
+# === STEP 6: UMAP Visualization ===
+print("\n📊 Visualizing clusters with UMAP...")
+reducer = umap.UMAP(n_neighbors=10, n_components=2, metric='cosine')
+embedding_2d = reducer.fit_transform(normalized_embeddings)
+
+plt.figure(figsize=(12, 7))
+palette = sns.color_palette("hls", len(set(topics)))
+for label in set(topics):
+    mask = (df['cluster'] == label).values
+    plt.scatter(embedding_2d[mask, 0], embedding_2d[mask, 1], label=f"Cluster {label}", alpha=0.75, s=100)
+
+plt.title("📌 Topic Clusters (Entities Masked)")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# === STEP 7: Save final results ===
+df.to_csv("clustered_texts_masked.tsv", sep="\t", index=False)
+print("\n✅ Final clustered output saved to clustered_texts_masked.tsv")
