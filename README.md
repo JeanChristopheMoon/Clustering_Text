@@ -1,6 +1,6 @@
 # Clustering Evaluation Metrics
 
-Internal Evaluation (No Ground Truth Required)
+✅ Internal Evaluation (No Ground Truth Required)
 
     Silhouette Score (Basic but reliable)
     Measures cohesion vs separation: higher is better (range -1 to 1).
@@ -25,7 +25,7 @@ Internal Evaluation (No Ground Truth Required)
     Used in BERTopic, LDA. Measures semantic similarity among top words in topics.
     → More aligned with human judgment of topic quality.
 
-🔵 External Evaluation (If Ground Truth Available)
+✅ External Evaluation (If Ground Truth Available)
 
     Adjusted Rand Index (ARI)
     Measures similarity between predicted and true clusters. Adjusts for chance.
